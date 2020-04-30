@@ -12,6 +12,14 @@ hand_rect_two_y = None
 finger_path = []
 
 
+def draw_lines(width, height, frame):
+    x1, x2, = 0, int(width)
+    line_thickness = 2
+    step_size = int(2 * height / (3 * 4))
+    for y in range(0, int((2 * height / 3) + step_size), step_size):
+        cv2.line(frame, (x1, int(y)), (x2, int(y)), (0, 255, 0), line_thickness)
+
+
 def rescale_frame(frame, wpercent=130, hpercent=130):
     width = int(frame.shape[1] * wpercent / 100)
     height = int(frame.shape[0] * hpercent / 100)
@@ -82,7 +90,7 @@ def hist_masking(frame, hist):
     cv2.filter2D(dst, -1, disc, dst)
 
     # threshold the image, then perform erosion and dilation to remove any small regions of noise
-    ret, thresh = cv2.threshold(dst, 150, 255, cv2.THRESH_BINARY)
+    _, thresh = cv2.threshold(dst, 150, 255, cv2.THRESH_BINARY)
     thresh = cv2.merge((thresh, thresh, thresh))
 
     hist_mask_image = cv2.erode(thresh, None, iterations=2)
@@ -129,16 +137,20 @@ def find_fingertip(frame, hist_mask_image):
     contour_list = contours(hist_mask_image)
     if contour_list:
         max_cont = max(contour_list, key=cv2.contourArea)
+        top = tuple(max_cont[max_cont[:, :, 1].argmin()][0])
+        # print(top)
+        # cv2.circle(frame, top, 5, [255, 255, 255], -1)
         cnt_centroid = centroid(max_cont)
         drawable_hull = cv2.convexHull(max_cont)
         cv2.drawContours(frame, [drawable_hull], -1, (255, 0, 0), 2)
-        hull = cv2.convexHull(max_cont, returnPoints=False)
-        defects = cv2.convexityDefects(max_cont, hull)
+        # hull = cv2.convexHull(max_cont, returnPoints=False)
+        # defects = cv2.convexityDefects(max_cont, hull)
+        #
+        # far_point = farthest_point(defects, max_cont, cnt_centroid)
 
-        far_point = farthest_point(defects, max_cont, cnt_centroid)
-
-        print(far_point)
-        return far_point
+        # print(far_point)
+        # return far_point
+        return top
     else:
         return None
 
