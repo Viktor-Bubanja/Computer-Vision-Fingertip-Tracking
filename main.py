@@ -1,10 +1,7 @@
 import cv2
 import numpy as np
 
-from MusicPlayer import MusicPlayer
-
 hand_hist = None
-traverse_point = []
 total_rectangle = 9
 hand_rect_one_x = None
 hand_rect_one_y = None
@@ -12,18 +9,7 @@ hand_rect_one_y = None
 hand_rect_two_x = None
 hand_rect_two_y = None
 
-
-
-current_note = "A"
-
-
-def draw_lines(width, height, frame):
-
-    x1, x2, = 0, int(width)
-    line_thickness = 2
-    step_size = int(2*height/(3*4))
-    for y in range(0, int((2*height/3) + step_size), step_size):
-        cv2.line(frame, (x1, int(y)), (x2, int(y)), (0, 255, 0), line_thickness)
+finger_path = []
 
 
 def rescale_frame(frame, wpercent=130, hpercent=130):
@@ -39,23 +25,11 @@ def contours(hist_mask_image):
     return cont
 
 
-def max_contour(contour_list):
-    max_i = 0
-    max_area = 0
-
-    for i in range(len(contour_list)):
-        cnt = contour_list[i]
-
-        area_cnt = cv2.contourArea(cnt)
-
-        if area_cnt > max_area:
-            max_area = area_cnt
-            max_i = i
-
-    return contour_list[max_i]
-
-
-def draw_rect(frame):
+"""
+Draw rectangles on the frame to indicate to the user where they should place their hand.
+The colours of the pixels within the rectangles are later extracted to generate a histogram.
+"""
+def draw_hist_rectangles(frame):
     rows, cols, _ = frame.shape
     global total_rectangle, hand_rect_one_x, hand_rect_one_y, hand_rect_two_x, hand_rect_two_y
 
@@ -78,6 +52,9 @@ def draw_rect(frame):
     return frame
 
 
+"""
+Extract pixels within rectangles and generate HSV histogram.
+"""
 def hand_histogram(frame):
     global hand_rect_one_x, hand_rect_one_y
 
@@ -92,30 +69,32 @@ def hand_histogram(frame):
     return cv2.normalize(hand_hist, hand_hist, 0, 255, cv2.NORM_MINMAX)
 
 
+"""
+Given a frame and a histogram, finds all regions that match the histogram using Histogram Back Projection.
+Returns a frame containing only these features.
+"""
 def hist_masking(frame, hist):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
     dst = cv2.calcBackProject([hsv], [0, 1], hist, [0, 180, 0, 256], 1)
 
     disc = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
     cv2.filter2D(dst, -1, disc, dst)
 
+    # threshold the image, then perform erosion and dilation to remove any small regions of noise
     ret, thresh = cv2.threshold(dst, 150, 255, cv2.THRESH_BINARY)
-
-    # thresh = cv2.dilate(thresh, None, iterations=5)
-
     thresh = cv2.merge((thresh, thresh, thresh))
 
-    return cv2.bitwise_and(frame, thresh)
+    hist_mask_image = cv2.erode(thresh, None, iterations=2)
+    hist_mask_image = cv2.dilate(hist_mask_image, None, iterations=2)
+    return cv2.bitwise_and(frame, hist_mask_image)
 
 
 def centroid(max_contour):
     moment = cv2.moments(max_contour)
-    if moment['m00'] != 0:
-        cx = int(moment['m10'] / moment['m00'])
-        cy = int(moment['m01'] / moment['m00'])
-        return cx, cy
-    else:
-        return None
+    cx = int(moment['m10'] / moment['m00'])
+    cy = int(moment['m01'] / moment['m00'])
+    return cx, cy
 
 
 def farthest_point(defects, contour, centroid):
@@ -123,87 +102,79 @@ def farthest_point(defects, contour, centroid):
         s = defects[:, 0][:, 0]
         cx, cy = centroid
 
-        x = np.array(contour[s][:, 0][:, 0], dtype=np.float)
         y = np.array(contour[s][:, 0][:, 1], dtype=np.float)
 
-        xp = cv2.pow(cv2.subtract(x, cx), 2)
-        yp = cv2.pow(cv2.subtract(y, cy), 2)
-        dist = cv2.sqrt(cv2.add(xp, yp))
-
+        dist = cv2.subtract(cy, y)
         dist_max_i = np.argmax(dist)
 
         if dist_max_i < len(s):
             farthest_defect = s[dist_max_i]
-            farthest_point = tuple(contour[farthest_defect][0])
-            return farthest_point
+            return tuple(contour[farthest_defect][0])
         else:
-            return None
+            return 0, 0
 
 
-def draw_circles(frame, traverse_point):
-    if traverse_point is not None:
-        for i in range(len(traverse_point)):
-            cv2.circle(frame, traverse_point[i], int(5 - (5 * i * 3) / 100), [0, 255, 255], -1)
+def draw_circles(frame, point_path):
+    last_point = point_path[-1]
+    for i in range(len(point_path) - 1):
+        cv2.circle(frame, point_path[i], int(5 - (5 * i * 3) / 100), [0, 255, 255], -1)
+    cv2.circle(frame, last_point, 5, [0, 0, 255], -1)
 
 
-def manage_image_opr(frame, hand_hist):
-    hist_mask_image = hist_masking(frame, hand_hist)
+"""
+Identify a pointed finger in a frame by finding a convexity defect furthest from the centroid of the contour.
+"""
+def find_fingertip(frame, hist_mask_image):
+    global finger_path
     contour_list = contours(hist_mask_image)
-    max_cont = max_contour(contour_list)
-
-    cnt_centroid = centroid(max_cont)
-    cv2.circle(frame, cnt_centroid, 5, [255, 0, 255], -1)
-
-    if max_cont is not None:
+    if contour_list:
+        max_cont = max(contour_list, key=cv2.contourArea)
+        cnt_centroid = centroid(max_cont)
+        drawable_hull = cv2.convexHull(max_cont)
+        cv2.drawContours(frame, [drawable_hull], -1, (255, 0, 0), 2)
         hull = cv2.convexHull(max_cont, returnPoints=False)
         defects = cv2.convexityDefects(max_cont, hull)
-        far_point = farthest_point(defects, max_cont, cnt_centroid)
-        # print("Centroid : " + str(cnt_centroid) + ", farthest Point : " + str(far_point))
-        cv2.circle(frame, far_point, 5, [0, 0, 255], -1)
-        if len(traverse_point) < 20:
-            traverse_point.append(far_point)
-        else:
-            traverse_point.pop(0)
-            traverse_point.append(far_point)
 
-        draw_circles(frame, traverse_point)
+        far_point = farthest_point(defects, max_cont, cnt_centroid)
+
+        print(far_point)
         return far_point
+    else:
+        return None
+
 
 
 def main():
-    music_player = None
     global hand_hist
-    is_hand_hist_created = False
-    capture = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(0)
 
-    while capture.isOpened():
-        pressed_key = cv2.waitKey(1)
-        _, frame = capture.read()
+    frame = None
 
-        if pressed_key & 0xFF == ord('z'):
-            is_hand_hist_created = True
-            hand_hist = hand_histogram(frame)
-
-        if is_hand_hist_created:
-            frame_width = capture.get(cv2.CAP_PROP_FRAME_WIDTH)
-            frame_height = capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
-            draw_lines(frame_width, frame_height, frame)
-            far_point = manage_image_opr(frame, hand_hist)
-            if not music_player:
-                music_player = MusicPlayer(frame_height)
-            print(music_player.get_current_note(far_point[1]))
-
-        else:
-            frame = draw_rect(frame)
-
-
+    while cv2.waitKey(1) & 0xFF != ord('z'):
+        _, frame = cap.read()
+        frame = cv2.flip(frame, 1)
+        draw_hist_rectangles(frame)
         cv2.imshow("Live Feed", rescale_frame(frame))
 
-        if pressed_key == 27:
-            break
+    hand_hist = hand_histogram(frame)
+
+    while cv2.waitKey(1) & 0xFF != ord('q'):
+        _, frame = cap.read()
+        frame = cv2.flip(frame, 1)
+
+        hist_mask_image = hist_masking(frame, hand_hist)
+
+        far_point = find_fingertip(frame, hist_mask_image)
+        if far_point:
+            finger_path.append(far_point)
+            if len(finger_path) > 20:
+                finger_path.pop(0)
+
+            draw_circles(frame, finger_path)
+        cv2.imshow("Live Feed", rescale_frame(frame))
 
     cv2.destroyAllWindows()
-    capture.release()
+    cap.release()
 
 
 if __name__ == '__main__':
