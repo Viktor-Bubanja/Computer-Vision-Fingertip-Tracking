@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
+import math
 
+DEFECT_THRESHOLD = 10000
+THUMB_THRESHOLD = 30
 hand_hist = None
 total_rectangle = 9
 hand_rect_one_x = None
@@ -10,6 +13,7 @@ hand_rect_two_x = None
 hand_rect_two_y = None
 
 finger_path = []
+convex_defects = []
 
 
 def draw_lines(width, height, frame):
@@ -89,16 +93,16 @@ def hist_masking(frame, hist):
     disc = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
     cv2.filter2D(dst, -1, disc, dst)
 
-    # threshold the image, then perform erosion and dilation to remove any small regions of noise
-    _, thresh = cv2.threshold(dst, 150, 255, cv2.THRESH_BINARY)
+    _, thresh = cv2.threshold(dst, 100, 255, cv2.THRESH_BINARY)
     thresh = cv2.merge((thresh, thresh, thresh))
 
-    hist_mask_image = cv2.erode(thresh, None, iterations=2)
-    hist_mask_image = cv2.dilate(hist_mask_image, None, iterations=2)
+    hist_mask_image = cv2.dilate(thresh, None, iterations=3)
+    hist_mask_image = cv2.erode(hist_mask_image, None, iterations=3)
+
     return cv2.bitwise_and(frame, hist_mask_image)
 
 
-def centroid(max_contour):
+def find_centroid(max_contour):
     moment = cv2.moments(max_contour)
     cx = int(moment['m10'] / moment['m00'])
     cy = int(moment['m01'] / moment['m00'])
@@ -134,25 +138,72 @@ Identify a pointed finger in a frame by finding a convexity defect furthest from
 """
 def find_fingertip(frame, hist_mask_image):
     global finger_path
+    global convex_defects
+    convex_defects.clear()
     contour_list = contours(hist_mask_image)
     if contour_list:
-        max_cont = max(contour_list, key=cv2.contourArea)
-        top = tuple(max_cont[max_cont[:, :, 1].argmin()][0])
-        # print(top)
-        # cv2.circle(frame, top, 5, [255, 255, 255], -1)
-        cnt_centroid = centroid(max_cont)
+        contour_list.sort(key=cv2.contourArea)
+        max_cont = contour_list[-1]
+        centroid = find_centroid(max_cont)
+        cv2.circle(hist_mask_image, centroid, 3, [20, 160, 50], -1)
         drawable_hull = cv2.convexHull(max_cont)
-        cv2.drawContours(frame, [drawable_hull], -1, (255, 0, 0), 2)
-        # hull = cv2.convexHull(max_cont, returnPoints=False)
-        # defects = cv2.convexityDefects(max_cont, hull)
-        #
-        # far_point = farthest_point(defects, max_cont, cnt_centroid)
+        cv2.drawContours(hist_mask_image, [drawable_hull], -1, (255, 0, 0), 2)
+        formatted = [tuple(i[0]) for i in drawable_hull]
+        fused_hull = sorted(fuse(formatted, 30), key=lambda point: point[1])
 
-        # print(far_point)
-        # return far_point
-        return top
+        hull = cv2.convexHull(max_cont, returnPoints=False)
+        defects = cv2.convexityDefects(max_cont, hull)
+        for i in range(defects.shape[0]):
+            s, e, f, d = defects[i, 0]
+            far = tuple(max_cont[f][0])
+            print(far)
+            if d > DEFECT_THRESHOLD and far[1] < centroid[1] + THUMB_THRESHOLD:
+                convex_defects.append(far)
+                cv2.circle(hist_mask_image, far, 5, [255, 255, 255], -1)
+
+        for i in range(len(convex_defects) + 1):
+            point = (int(fused_hull[i][0]), int(fused_hull[i][1]))
+            cv2.circle(hist_mask_image, point, 10, [0, 0, 255], -1)
+
+
+
+
+        if len(contour_list) > 1:
+            second_max = contour_list[-2]
+            top2 = tuple(second_max[second_max[:, :, 1].argmin()][0])
+            cv2.circle(hist_mask_image, top2, 5, [90, 255, 90], -1)
+            drawable_hull = cv2.convexHull(second_max)
+            cv2.drawContours(hist_mask_image, [drawable_hull], -1, (255, 0, 0), 2)
+
+
+        print(convex_defects)
+        return None
     else:
         return None
+
+
+def dist2(p1, p2):
+    return math.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
+
+def fuse(points, distance):
+    ret = []
+    n = len(points)
+    taken = [False] * n
+    for i in range(n):
+        if not taken[i]:
+            count = 1
+            point = [points[i][0], points[i][1]]
+            taken[i] = True
+            for j in range(i+1, n):
+                if dist2(points[i], points[j]) < distance:
+                    point[0] += points[j][0]
+                    point[1] += points[j][1]
+                    count+=1
+                    taken[j] = True
+            point[0] /= count
+            point[1] /= count
+            ret.append((point[0], point[1]))
+    return ret
 
 
 
@@ -183,7 +234,7 @@ def main():
                 finger_path.pop(0)
 
             draw_circles(frame, finger_path)
-        cv2.imshow("Live Feed", rescale_frame(frame))
+        cv2.imshow("Live Feed", rescale_frame(hist_mask_image))
 
     cv2.destroyAllWindows()
     cap.release()
