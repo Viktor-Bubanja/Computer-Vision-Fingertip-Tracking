@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import math
 
-DEFECT_THRESHOLD = 10000
+DEFECT_THRESHOLD = 12000
 THUMB_THRESHOLD = 30
 hand_hist = None
 total_rectangle = 9
@@ -93,13 +93,32 @@ def hist_masking(frame, hist):
     disc = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
     cv2.filter2D(dst, -1, disc, dst)
 
-    _, thresh = cv2.threshold(dst, 100, 255, cv2.THRESH_BINARY)
+    hist_threshold_min = 70
+    hist_threshold_max = 255
+    _, thresh = cv2.threshold(dst, hist_threshold_min, hist_threshold_max, cv2.THRESH_BINARY)
     thresh = cv2.merge((thresh, thresh, thresh))
 
-    hist_mask_image = cv2.dilate(thresh, None, iterations=3)
-    hist_mask_image = cv2.erode(hist_mask_image, None, iterations=3)
+    hist_mask_image = cv2.dilate(thresh, None, iterations=2)
+    hist_mask_image = cv2.erode(hist_mask_image, None, iterations=2)
 
     return cv2.bitwise_and(frame, hist_mask_image)
+
+
+# Terrible hist masking method. Use in report for bad example
+def hist_masking2(frame, hist):
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    dst = cv2.calcBackProject([hsv], [0,1], hist, [0,180,0,256], 1)
+
+    disc = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11,11))
+    cv2.filter2D(dst, -1, disc, dst)
+
+    _, thresh = cv2.threshold(dst, 100, 255, 0)
+    thresh = cv2.merge((thresh,thresh, thresh))
+
+    cv2.GaussianBlur(dst, (3,3), 0, dst)
+
+    res = cv2.bitwise_and(frame, thresh)
+    return res
 
 
 def find_centroid(max_contour):
@@ -109,23 +128,6 @@ def find_centroid(max_contour):
     return cx, cy
 
 
-def farthest_point(defects, contour, centroid):
-    if defects is not None and centroid is not None:
-        s = defects[:, 0][:, 0]
-        cx, cy = centroid
-
-        y = np.array(contour[s][:, 0][:, 1], dtype=np.float)
-
-        dist = cv2.subtract(cy, y)
-        dist_max_i = np.argmax(dist)
-
-        if dist_max_i < len(s):
-            farthest_defect = s[dist_max_i]
-            return tuple(contour[farthest_defect][0])
-        else:
-            return 0, 0
-
-
 def draw_circles(frame, point_path):
     last_point = point_path[-1]
     for i in range(len(point_path) - 1):
@@ -133,9 +135,7 @@ def draw_circles(frame, point_path):
     cv2.circle(frame, last_point, 5, [0, 0, 255], -1)
 
 
-"""
-Identify a pointed finger in a frame by finding a convexity defect furthest from the centroid of the contour.
-"""
+
 def find_fingertip(frame, hist_mask_image):
     global finger_path
     global convex_defects
@@ -156,7 +156,6 @@ def find_fingertip(frame, hist_mask_image):
         for i in range(defects.shape[0]):
             s, e, f, d = defects[i, 0]
             far = tuple(max_cont[f][0])
-            print(far)
             if d > DEFECT_THRESHOLD and far[1] < centroid[1] + THUMB_THRESHOLD:
                 convex_defects.append(far)
                 cv2.circle(hist_mask_image, far, 5, [255, 255, 255], -1)
@@ -164,8 +163,6 @@ def find_fingertip(frame, hist_mask_image):
         for i in range(len(convex_defects) + 1):
             point = (int(fused_hull[i][0]), int(fused_hull[i][1]))
             cv2.circle(hist_mask_image, point, 10, [0, 0, 255], -1)
-
-
 
 
         if len(contour_list) > 1:
@@ -176,7 +173,6 @@ def find_fingertip(frame, hist_mask_image):
             cv2.drawContours(hist_mask_image, [drawable_hull], -1, (255, 0, 0), 2)
 
 
-        print(convex_defects)
         return None
     else:
         return None
