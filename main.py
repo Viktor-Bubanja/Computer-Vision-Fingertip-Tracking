@@ -3,7 +3,8 @@ import numpy as np
 import math
 
 DEFECT_THRESHOLD = 12000
-THUMB_THRESHOLD = 30
+THUMB_THRESHOLD = 100
+MIN_CONTOUR_AREA = 20000
 hand_hist = None
 total_rectangle = 9
 hand_rect_one_x = None
@@ -32,8 +33,8 @@ def rescale_frame(frame, wpercent=130, hpercent=130):
 
 def contours(hist_mask_image):
     gray_hist_mask_image = cv2.cvtColor(hist_mask_image, cv2.COLOR_BGR2GRAY)
-    ret, thresh = cv2.threshold(gray_hist_mask_image, 0, 255, 0)
-    cont, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    _, thresh = cv2.threshold(gray_hist_mask_image, 0, 255, cv2.THRESH_BINARY)
+    cont, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     return cont
 
 
@@ -90,10 +91,10 @@ def hist_masking(frame, hist):
 
     dst = cv2.calcBackProject([hsv], [0, 1], hist, [0, 180, 0, 256], 1)
 
-    disc = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
-    cv2.filter2D(dst, -1, disc, dst)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+    cv2.filter2D(dst, -1, kernel, dst)
 
-    hist_threshold_min = 70
+    hist_threshold_min = 130
     hist_threshold_max = 255
     _, thresh = cv2.threshold(dst, hist_threshold_min, hist_threshold_max, cv2.THRESH_BINARY)
     thresh = cv2.merge((thresh, thresh, thresh))
@@ -141,9 +142,13 @@ def find_fingertip(frame, hist_mask_image):
     global convex_defects
     convex_defects.clear()
     contour_list = contours(hist_mask_image)
+    print(len(contour_list))
     if contour_list:
-        contour_list.sort(key=cv2.contourArea)
-        max_cont = contour_list[-1]
+        # Only identifying significant contours before finding contour with maximum area
+        contour_list = list(filter(lambda x: cv2.contourArea(x) > MIN_CONTOUR_AREA, contour_list))
+        if not contour_list:
+            return None
+        max_cont = max(contour_list, key=cv2.contourArea)
         centroid = find_centroid(max_cont)
         cv2.circle(hist_mask_image, centroid, 3, [20, 160, 50], -1)
         drawable_hull = cv2.convexHull(max_cont)
@@ -162,6 +167,7 @@ def find_fingertip(frame, hist_mask_image):
 
         for i in range(len(convex_defects) + 1):
             point = (int(fused_hull[i][0]), int(fused_hull[i][1]))
+            print(point)
             cv2.circle(hist_mask_image, point, 10, [0, 0, 255], -1)
 
 
