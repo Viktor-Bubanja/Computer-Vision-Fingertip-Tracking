@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+
 THRESHOLD = 20
 total_rectangle = 9
 hand_rect_one_x = None
@@ -63,7 +64,7 @@ def hist_masking(frame, hist):
     hist_mask_image = cv2.dilate(thresh, None, iterations=2)
     hist_mask_image = cv2.erode(hist_mask_image, None, iterations=2)
 
-    return cv2.bitwise_and(frame, hist_mask_image), thresh
+    return hist_mask_image
 
 
 def run_avg(image, background, alpha):
@@ -74,23 +75,33 @@ def run_avg(image, background, alpha):
     cv2.accumulateWeighted(image, background, alpha)
     return background
 
+def grayscale_blur_image(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return cv2.GaussianBlur(gray, (7, 7), 0)
 
-def find_hand_contour(image, background):
+
+
+def background_substraction(image, background):
+    gray_image = grayscale_blur_image(image)
+
     # find the absolute difference between background and current frame
-    diff = cv2.absdiff(background.astype("uint8"), image)
+    diff = cv2.absdiff(background.astype("uint8"), gray_image)
 
     # threshold the diff image so that we get the foreground
     thresh = cv2.threshold(diff, THRESHOLD, 255, cv2.THRESH_BINARY)[1]
 
-    # dilated_image = cv2.dilate(thresh, None, iterations=2)
-    # eroded_image = cv2.erode(dilated_image, None, iterations=2)
+    return cv2.merge((thresh, thresh, thresh))
 
-    kernel = np.ones((3, 3), np.uint8)
-    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
-    closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel, iterations=3)
+def find_hand_contour(image, hand_hist, background):
+    hist_thresh = hist_masking(image, hand_hist)
+    background_thresh = background_substraction(image, background)
+
+    # Finding the overlap between background subtraction and histogram methods.
+    combine = cv2.bitwise_and(background_thresh, hist_thresh)
+    combine = cv2.cvtColor(combine, cv2.COLOR_BGR2GRAY)
 
     # get the contours in the thresholded image
-    contours, _ = cv2.findContours(closing.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(combine, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # Old one:
     # cont, _ = cv2.findContours(hand_region, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -100,4 +111,4 @@ def find_hand_contour(image, background):
         return None, None
     else:
         # based on contour area, get the maximum contour which is the hand
-        return max(contours, key=cv2.contourArea), closing
+        return max(contours, key=cv2.contourArea), combine

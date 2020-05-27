@@ -1,8 +1,6 @@
 import cv2
 import math
 
-from hand_segmentation import find_hand_contour, run_avg
-
 DEFECT_THRESHOLD = 12000
 THUMB_THRESHOLD = 100
 MIN_CONTOUR_AREA = 20000
