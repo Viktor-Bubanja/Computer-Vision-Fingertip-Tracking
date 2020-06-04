@@ -18,6 +18,21 @@ def grayscale_blur_image(image):
     return cv2.GaussianBlur(gray, (7, 7), 0)
 
 
+def main2():
+    cap = cv2.VideoCapture(0)
+
+    while cv2.waitKey(1) & 0xFF != ord('z'):
+        _, frame = cap.read()
+        frame = cv2.flip(frame, 1)
+        frame = draw_hist_rectangles(frame)
+        cv2.imshow("Retrieve histogram", rescale_frame(frame))
+
+    hand_hist = hand_histogram(frame)
+
+    while cv2.waitKey(1) & 0xFF != ord('q'):
+        _, frame = cap.read()
+        frame = cv2.flip(frame, 1)
+
 def main():
     background = None
     # initialize alpha weight for running average
@@ -37,6 +52,8 @@ def main():
 
     time.sleep(2)
 
+    cv2.destroyWindow("Retrieve histogram")
+
     while cv2.waitKey(1) & 0xFF != ord('q'):
         _, frame = cap.read()
         frame = cv2.flip(frame, 1)
@@ -49,9 +66,8 @@ def main():
             cv2.imshow("Calibrating background", frame)
 
         else:
-            hand_region, thresh = find_hand_contour(frame, hand_hist, background)
-            if thresh is not None:
-                cv2.imshow("Thresh", rescale_frame(thresh))
+            cv2.destroyWindow("Calibrating background")
+            hand_region = find_hand_contour(frame, hand_hist, background)
 
             fingertips = find_fingertip(frame, hand_region)
             fingertips.sort(key=lambda x: x[0])
