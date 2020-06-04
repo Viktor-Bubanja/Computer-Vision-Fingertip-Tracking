@@ -9,19 +9,21 @@ def find_fingertips(frame, hand_region):
     """Find fingertips by finding a convex hull of the user's hand, grouping hull points
     so there is one hull point per finger, find the number of significant convexity defects (X),
     then identify the topmost X + 1 hull points as fingertips."""
+    fingertips = []
     if hand_region is not None:
         hull_points = cv2.convexHull(hand_region)
+        cv2.drawContours(frame, [hull_points], -1, (255, 0, 0), 2)
+        hull_points = [tuple(i[0]) for i in hull_points]
         hand_height = max(hull_points, key=lambda p: p[1])[1] - min(hull_points, key=lambda p: p[1])[1]
         defect_threshold = int(hand_height / 4)
         num_defects = find_number_convex_defects(hand_region, defect_threshold)
-        cv2.drawContours(frame, [hull_points], -1, (255, 0, 0), 2)
-        hull_points = [tuple(i[0]) for i in hull_points]
         fused_hull = sorted(group_fingertip_points(hull_points), key=lambda p: p[1])
 
         for i in range(num_defects + 1):
             if i < len(fused_hull):
                 point = (int(fused_hull[i][0]), int(fused_hull[i][1]))
-                yield point
+                fingertips.append(point)
+    return fingertips
 
 def find_number_convex_defects(hand_region, defect_threshold):
     """Find the number of significant convexity defects in a hand (corresponding to
